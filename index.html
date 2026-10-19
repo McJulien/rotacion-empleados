@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predicción de rotación de empleados</title>
+<style>
+  :root {
+    --bg: #f5f6fa; --card: #ffffff; --text: #1f2430; --muted: #6b7385;
+    --border: #d9dde6; --accent: #2f5bea; --ok: #1e9e5a; --warn: #e0a100; --bad: #d64545;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161c; --card: #1d2029; --text: #e8eaf0; --muted: #9aa1b2;
+      --border: #333847; --accent: #6b8cff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); line-height: 1.5; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          padding: 18px; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
+  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+                  border-radius: 8px; background: var(--bg); color: var(--text); font-size: .95rem; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+           padding: 11px 22px; font-size: 1rem; cursor: pointer; margin-top: 16px; }
+  button.sec { background: transparent; color: var(--accent); border: 1px solid var(--accent);
+               padding: 8px 14px; font-size: .9rem; margin-top: 10px; }
+  details summary { cursor: pointer; font-weight: 600; margin: 14px 0 10px; }
+  #estado { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem;
+            background: var(--card); border: 1px solid var(--border); }
+  #estado.error { border-color: var(--bad); color: var(--bad); }
+  .barra { height: 16px; background: var(--border); border-radius: 8px; overflow: hidden; margin: 10px 0; }
+  .barra > div { height: 100%; width: 0; transition: width .5s, background .5s; }
+  .pct { font-size: 2.4rem; font-weight: 700; }
+  .nivel { font-weight: 600; }
+  .nota { color: var(--muted); font-size: .8rem; margin-top: 18px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Predicción de rotación de empleados</h1>
+  <p class="sub">Estima la probabilidad de que un empleado deje la empresa (modelo de red neuronal entrenado con el dataset IBM HR).</p>
+
+  <div id="estado">Cargando modelo…</div>
+
+  <form id="form" class="card" hidden>
+    <div id="campos-principales" class="grid"></div>
+    <details>
+      <summary>Más variables (opcional, ya tienen valores típicos)</summary>
+      <div id="campos-extra" class="grid"></div>
+    </details>
+    <button type="submit">Calcular riesgo</button>
+  </form>
+
+  <section id="resultado" class="card" hidden>
+    <div class="pct" id="pct">0%</div>
+    <div class="barra"><div id="barra"></div></div>
+    <div class="nivel" id="nivel"></div>
+    <p class="nota">Herramienta de apoyo con fines académicos. No sustituye el criterio de un profesional de Recursos Humanos.</p>
+  </section>
+
+  <section class="card" id="verif" hidden>
+    <strong>Verificación del modelo</strong>
+    <p class="sub" style="margin:6px 0 0">Compara la predicción de esta página con la del notebook usando <code>caso_prueba.json</code>.</p>
+    <button type="button" class="sec" id="btn-verif">Ejecutar caso de prueba</button>
+    <div id="verif-out" style="margin-top:10px"></div>
+  </section>
+</main>
+
+<script>
+// ---------- Definición de los campos del formulario ----------
+// k = nombre exacto de la columna en el dataset, v = valor por defecto (mediana típica del dataset)
+const NUMERICOS = [
+  { k: 'Age', l: 'Edad', v: 36, min: 18, max: 65, main: true },
+  { k: 'MonthlyIncome', l: 'Ingreso mensual (USD)', v: 4919, min: 1000, max: 20000, main: true },
+  { k: 'YearsAtCompany', l: 'Años en la empresa', v: 5, min: 0, max: 40, main: true },
+  { k: 'YearsSinceLastPromotion', l: 'Años desde el último ascenso', v: 1, min: 0, max: 15, main: true },
+  { k: 'DistanceFromHome', l: 'Distancia a casa (km)', v: 7, min: 1, max: 30, main: true },
+  { k: 'JobSatisfaction', l: 'Satisfacción con el trabajo (1-4)', v: 3, min: 1, max: 4, main: true },
+  { k: 'WorkLifeBalance', l: 'Equilibrio vida-trabajo (1-4)', v: 3, min: 1, max: 4, main: true },
+  { k: 'EnvironmentSatisfaction', l: 'Satisfacción con el ambiente (1-4)', v: 3, min: 1, max: 4, main: true },
+
+  { k: 'DailyRate', l: 'Tarifa diaria', v: 802, min: 100, max: 1500 },
+  { k: 'HourlyRate', l: 'Tarifa por hora', v: 66, min: 30, max: 100 },
+  { k: 'MonthlyRate', l: 'Tarifa mensual', v: 14236, min: 2000, max: 27000 },
+  { k: 'Education', l: 'Nivel educativo (1-5)', v: 3, min: 1, max: 5 },
+  { k: 'JobInvolvement', l: 'Involucramiento (1-4)', v: 3, min: 1, max: 4 },
+  { k: 'JobLevel', l: 'Nivel del puesto (1-5)', v: 2, min: 1, max: 5 },
+  { k: 'NumCompaniesWorked', l: 'Empresas anteriores', v: 2, min: 0, max: 10 },
+  { k: 'PercentSalaryHike', l: 'Aumento salarial (%)', v: 14, min: 0, max: 30 },
+  { k: 'PerformanceRating', l: 'Evaluación de desempeño (1-4)', v: 3, min: 1, max: 4 },
+  { k: 'RelationshipSatisfaction', l: 'Satisfacción con relaciones (1-4)', v: 3, min: 1, max: 4 },
+  { k: 'StockOptionLevel', l: 'Nivel de acciones (0-3)', v: 1, min: 0, max: 3 },
+  { k: 'TotalWorkingYears', l: 'Años totales trabajando', v: 10, min: 0, max: 40 },
+  { k: 'TrainingTimesLastYear', l: 'Capacitaciones el último año', v: 3, min: 0, max: 6 },
+  { k: 'YearsInCurrentRole', l: 'Años en el puesto actual', v: 3, min: 0, max: 20 },
+  { k: 'YearsWithCurrManager', l: 'Años con el jefe actual', v: 3, min: 0, max: 20 },
+];
+
+const CATEGORICOS = [
+  { k: 'OverTime', l: 'Trabaja horas extra', main: true },
+  { k: 'Department', l: 'Departamento', main: true },
+  { k: 'JobRole', l: 'Puesto', main: true },
+  { k: 'BusinessTravel', l: 'Viajes de trabajo' },
+  { k: 'EducationField', l: 'Área de estudio' },
+  { k: 'Gender', l: 'Género' },
+  { k: 'MaritalStatus', l: 'Estado civil', main: true },
+];
+
+// ---------- Estado global ----------
+let PRE = null;      // preprocesamiento.json
+let PESOS = null;    // pesos.json
+let CASO = null;     // caso_prueba.json (opcional)
+
+const $ = id => document.getElementById(id);
+
+// ---------- Carga de archivos ----------
+async function cargarJSON(ruta, obligatorio = true) {
+  try {
+    const r = await fetch(ruta);
+    if (!r.ok) throw new Error(r.status);
+    return await r.json();
+  } catch (e) {
+    if (obligatorio) throw new Error(`No se pudo cargar ${ruta}`);
+    return null;
+  }
+}
+
+async function iniciar() {
+  try {
+    [PRE, PESOS] = await Promise.all([cargarJSON('preprocesamiento.json'), cargarJSON('pesos.json')]);
+    CASO = await cargarJSON('caso_prueba.json', false);
+
+    // Comprobación de que los pesos coinciden con las columnas
+    if (PESOS.length !== 6) throw new Error('pesos.json debe contener 6 arreglos (3 capas: pesos y sesgos).');
+    if (PESOS[0].length !== PRE.columnas.length)
+      throw new Error(`El modelo espera ${PESOS[0].length} entradas pero preprocesamiento.json tiene ${PRE.columnas.length} columnas.`);
+
+    construirFormulario();
+    $('form').hidden = false;
+    if (CASO) $('verif').hidden = false;
+    $('estado').textContent = 'Modelo cargado. Completa los datos del empleado.';
+  } catch (e) {
+    $('estado').textContent = 'Error: ' + e.message;
+    $('estado').classList.add('error');
+  }
+}
+
+// ---------- Formulario ----------
+function construirFormulario() {
+  const principal = $('campos-principales');
+  const extra = $('campos-extra');
+
+  CATEGORICOS.forEach(c => {
+    const opciones = PRE.categorias[c.k] || [];
+    const div = document.createElement('div');
+    div.innerHTML = `<label for="${c.k}">${c.l}</label>
+      <select id="${c.k}">${opciones.map(o => `<option value="${o}">${o}</option>`).join('')}</select>`;
+    (c.main ? principal : extra).appendChild(div);
+  });
+
+  NUMERICOS.forEach(n => {
+    const div = document.createElement('div');
+    div.innerHTML = `<label for="${n.k}">${n.l}</label>
+      <input type="number" id="${n.k}" value="${n.v}" min="${n.min}" max="${n.max}" step="any" required>`;
+    (n.main ? principal : extra).appendChild(div);
+  });
+}
+
+// ---------- Preprocesamiento (idéntico al notebook) ----------
+function construirVector(datos) {
+  const f = { ...datos };
+
+  // Variables creadas en el notebook
+  f.Estancamiento = datos.YearsAtCompany / (datos.YearsSinceLastPromotion + 1);
+  f.Riesgo_Joven = (datos.Age < 30 && datos.OverTime === 'Yes') ? 1 : 0;
+  f.Brecha_Salarial = PRE.max_salario_dept[datos.Department] - datos.MonthlyIncome;
+
+  // One-hot (get_dummies): columna "Variable_Valor" = 1 si coincide
+  CATEGORICOS.forEach(c => {
+    (PRE.categorias[c.k] || []).forEach(valor => {
+      f[`${c.k}_${valor}`] = datos[c.k] === valor ? 1 : 0;
+    });
+  });
+
+  // Vector en el orden exacto de entrenamiento
+  return PRE.columnas.map(col => Number(f[col] ?? 0));
+}
+
+// ---------- Red neuronal (64 -> 32 -> 1) ----------
+const relu = x => (x > 0 ? x : 0);
+const sigmoid = x => 1 / (1 + Math.exp(-x));
+
+function capa(entrada, W, b, activacion) {
+  const salida = new Array(b.length);
+  for (let j = 0; j < b.length; j++) {
+    let suma = b[j];
+    for (let i = 0; i < entrada.length; i++) suma += entrada[i] * W[i][j];
+    salida[j] = activacion(suma);
+  }
+  return salida;
+}
+
+function predecir(vector) {
+  // Escalado: (x - media) / desviación
+  const x = vector.map((v, i) => (v - PRE.scaler_mean[i]) / PRE.scaler_scale[i]);
+  // Dropout no se usa en inferencia
+  const h1 = capa(x, PESOS[0], PESOS[1], relu);
+  const h2 = capa(h1, PESOS[2], PESOS[3], relu);
+  const out = capa(h2, PESOS[4], PESOS[5], sigmoid);
+  return out[0];
+}
+
+// ---------- Resultado ----------
+function mostrarResultado(p) {
+  const pct = (p * 100).toFixed(1);
+  let nivel, color;
+  if (p < 0.3) { nivel = 'Riesgo bajo'; color = 'var(--ok)'; }
+  else if (p < 0.5) { nivel = 'Riesgo medio'; color = 'var(--warn)'; }
+  else { nivel = 'Riesgo alto: el modelo predice que el empleado se iría'; color = 'var(--bad)'; }
+
+  $('pct').textContent = pct + '%';
+  $('pct').style.color = color;
+  $('barra').style.width = pct + '%';
+  $('barra').style.background = color;
+  $('nivel').textContent = nivel;
+  $('resultado').hidden = false;
+  $('resultado').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+$('form').addEventListener('submit', e => {
+  e.preventDefault();
+  const datos = {};
+  NUMERICOS.forEach(n => datos[n.k] = Number($(n.k).value));
+  CATEGORICOS.forEach(c => datos[c.k] = $(c.k).value);
+  mostrarResultado(predecir(construirVector(datos)));
+});
+
+// ---------- Verificación con el caso de prueba del notebook ----------
+$('btn-verif').addEventListener('click', () => {
+  const vector = PRE.columnas.map(col => Number(CASO.entrada[col] ?? 0));
+  const p = predecir(vector);
+  const esperado = CASO.prob_esperada;
+  const dif = Math.abs(p - esperado);
+  const ok = dif < 1e-4;
+  $('verif-out').innerHTML =
+    `Esta página: <b>${p.toFixed(6)}</b><br>Notebook: <b>${esperado.toFixed(6)}</b><br>` +
+    `Diferencia: ${dif.toExponential(2)} → <b style="color:${ok ? 'var(--ok)' : 'var(--bad)'}">${ok ? '✔ Coincide' : '✘ No coincide, revisa los pesos o las columnas'}</b>`;
+});
+
+iniciar();
+</script>
+</body>
+</html>
