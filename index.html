@@ -66,12 +66,6 @@
     <p class="nota">Herramienta de apoyo con fines académicos. No sustituye el criterio de un profesional de Recursos Humanos.</p>
   </section>
 
-  <section class="card" id="verif" hidden>
-    <strong>Verificación del modelo</strong>
-    <p class="sub" style="margin:6px 0 0">Compara la predicción de esta página con la del notebook usando <code>caso_prueba.json</code>.</p>
-    <button type="button" class="sec" id="btn-verif">Ejecutar caso de prueba</button>
-    <div id="verif-out" style="margin-top:10px"></div>
-  </section>
 </main>
 
 <script>
@@ -117,26 +111,23 @@ const CATEGORICOS = [
 // ---------- Estado global ----------
 let PRE = null;      // preprocesamiento.json
 let PESOS = null;    // pesos.json
-let CASO = null;     // caso_prueba.json (opcional)
 
 const $ = id => document.getElementById(id);
 
 // ---------- Carga de archivos ----------
-async function cargarJSON(ruta, obligatorio = true) {
+async function cargarJSON(ruta) {
   try {
     const r = await fetch(ruta);
     if (!r.ok) throw new Error(r.status);
     return await r.json();
   } catch (e) {
-    if (obligatorio) throw new Error(`No se pudo cargar ${ruta}`);
-    return null;
+    throw new Error(`No se pudo cargar ${ruta}`);
   }
 }
 
 async function iniciar() {
   try {
     [PRE, PESOS] = await Promise.all([cargarJSON('preprocesamiento.json'), cargarJSON('pesos.json')]);
-    CASO = await cargarJSON('caso_prueba.json', false);
 
     // Comprobación de que los pesos coinciden con las columnas
     if (PESOS.length !== 6) throw new Error('pesos.json debe contener 6 arreglos (3 capas: pesos y sesgos).');
@@ -145,7 +136,6 @@ async function iniciar() {
 
     construirFormulario();
     $('form').hidden = false;
-    if (CASO) $('verif').hidden = false;
     $('estado').textContent = 'Modelo cargado. Completa los datos del empleado.';
   } catch (e) {
     $('estado').textContent = 'Error: ' + e.message;
@@ -241,18 +231,6 @@ $('form').addEventListener('submit', e => {
   NUMERICOS.forEach(n => datos[n.k] = Number($(n.k).value));
   CATEGORICOS.forEach(c => datos[c.k] = $(c.k).value);
   mostrarResultado(predecir(construirVector(datos)));
-});
-
-// ---------- Verificación con el caso de prueba del notebook ----------
-$('btn-verif').addEventListener('click', () => {
-  const vector = PRE.columnas.map(col => Number(CASO.entrada[col] ?? 0));
-  const p = predecir(vector);
-  const esperado = CASO.prob_esperada;
-  const dif = Math.abs(p - esperado);
-  const ok = dif < 1e-4;
-  $('verif-out').innerHTML =
-    `Esta página: <b>${p.toFixed(6)}</b><br>Notebook: <b>${esperado.toFixed(6)}</b><br>` +
-    `Diferencia: ${dif.toExponential(2)} → <b style="color:${ok ? 'var(--ok)' : 'var(--bad)'}">${ok ? '✔ Coincide' : '✘ No coincide, revisa los pesos o las columnas'}</b>`;
 });
 
 iniciar();
